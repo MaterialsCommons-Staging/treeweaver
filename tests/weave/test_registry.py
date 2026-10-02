@@ -146,3 +146,38 @@ def test_a_handler_can_still_demand_case(registry):
 
     assert registry.resolve("docs/README").name == "shouty"
     assert registry.resolve("docs/readme").name != "shouty"
+
+
+def test_weave_does_not_mutate_a_registry_it_was_handed():
+    """Passing default_registry() must not rebind it for every later call."""
+    import tempfile
+    from pathlib import Path
+
+    from treeweaver.weave import default_registry, weave
+
+    shared = default_registry()
+    assert shared.enabled("tiff") is True
+
+    source = Path(tempfile.mkdtemp())
+    (source / "a.txt").write_bytes(b"x")
+    weave(
+        source,
+        registry=shared,
+        handler_settings={"tiff": {"enabled": False}},
+        zip=False,
+    )
+
+    assert shared.enabled("tiff") is True
+
+
+def test_an_invalid_match_regex_override_names_the_pattern(registry):
+    with pytest.raises(ValueError, match="not a valid regex"):
+        registry.apply_settings({"tiff": {"match_regex": r"(unclosed"}})
+
+
+def test_exclude_globs_do_not_follow_the_platform(registry):
+    """Both operating systems are in the CI matrix; the answer must match."""
+    from treeweaver.weave.fsutil import excluded
+
+    assert excluded("a.tif", ["*.TIF"]) is None
+    assert excluded("a.TIF", ["*.TIF"]) == "*.TIF"

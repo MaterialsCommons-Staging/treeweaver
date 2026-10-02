@@ -15,6 +15,7 @@ from wcmatch import glob as wcglob
 __all__ = [
     "GLOB_FLAGS",
     "children",
+    "contained",
     "excluded",
     "normalise",
     "open_fs",
@@ -22,9 +23,10 @@ __all__ = [
     "zip_tree",
 ]
 
-# The same flags treeweaver2 uses, so an exclude pattern means the same thing in
-# both halves of the tool even though weave never reads them from a config file.
-GLOB_FLAGS = wcglob.GLOBSTAR | wcglob.BRACE | wcglob.DOTGLOB
+# CASE is what treeweaver2 uses and what keeps this deterministic: without it
+# wcmatch follows the platform, so the same --exclude would drop different files
+# on Windows and on Linux. DOTGLOB is ours, so a pattern can reach dotfiles.
+GLOB_FLAGS = wcglob.CASE | wcglob.GLOBSTAR | wcglob.BRACE | wcglob.DOTGLOB
 
 
 def normalise(path: str) -> str:
@@ -36,6 +38,31 @@ def open_fs(url: str | Path) -> tuple[fsspec.AbstractFileSystem, str]:
     """Resolve `url` to a filesystem and the path of the root within it."""
     fs, path = fsspec.core.url_to_fs(str(url))
     return fs, normalise(path)
+
+
+def contained(rel: str) -> str | None:
+    """Resolve `rel` against the twin root, or None if it escapes.
+
+    An archive member may be named ``../../evil.txt``, and fsspec's ZipFileSystem
+    surfaces those segments as real directory entries. Nothing downstream
+    normalises them, so without this check a crafted archive writes anywhere the
+    process can reach. Weave runs over data nobody vouched for, which is the
+    whole point of it, so the containment has to be enforced here.
+    """
+    candidate = normalise(rel).lstrip("/")
+    parts: list[str] = []
+    for part in candidate.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        parts.append(part)
+    if not parts:
+        return None
+    return "/".join(parts)
 
 
 def relative_to(abs_path: str, root: str) -> str:

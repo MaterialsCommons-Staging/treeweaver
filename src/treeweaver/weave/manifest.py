@@ -8,7 +8,7 @@ without guessing whether a missing file was excluded, elided or broken.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 from .budgets import Budgets
 from .registry import Match
@@ -61,11 +61,18 @@ class Manifest(BaseModel):
     totals: Totals = Field(default_factory=Totals)
     entries: list[ManifestEntry] = Field(default_factory=list)
 
+    _seen: set[str] = PrivateAttr(default_factory=set)
+
     def record(self, entry: ManifestEntry) -> None:
         self.entries.append(entry)
         totals = self.totals
-        totals.nodes += 1
-        totals.bytes_in += entry.bytes_in
+        # One source node can yield several outcomes, so counting entries would
+        # overstate both the node count and the bytes read. `keep` plus `text`
+        # on one document is two entries over one file read once.
+        if entry.src not in self._seen:
+            self._seen.add(entry.src)
+            totals.nodes += 1
+            totals.bytes_in += entry.bytes_in
         totals.bytes_out += entry.bytes_out
         counter = {
             "copy": "copied",

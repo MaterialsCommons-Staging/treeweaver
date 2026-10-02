@@ -15,12 +15,21 @@ def _handle(param: HandlerParam) -> list[Outcome]:
     protocol = node.fs.protocol
     if isinstance(protocol, list | tuple):
         protocol = protocol[0]
-    outer = (
-        node.abs_path
-        if protocol in ("file", "local")
-        else f"{protocol}://{node.abs_path}"
-    )
-    return [Descend(src=f"zip://::{outer}", into=node.path + "/")]
+
+    if protocol in ("file", "local"):
+        return [Descend(src=f"zip://::{node.abs_path}", into=node.path + "/")]
+
+    # An archive inside another archive cannot be addressed by URL: the inner
+    # leg would have to name the outer container, and chaining "zip://::zip://"
+    # loses it. Reading the member out and handing over its bytes is the one
+    # form that works at any depth, and fsspec's memory backend is where those
+    # bytes can be addressed from.
+    import fsspec
+
+    memory = fsspec.filesystem("memory")
+    staged = f"/_treeweaver_archive/{abs(hash(node.abs_path)):x}/{node.path}"
+    memory.pipe_file(staged, param.read())
+    return [Descend(src=f"zip://::memory://{staged}", into=node.path + "/")]
 
 
 def archive_handler() -> Handler:

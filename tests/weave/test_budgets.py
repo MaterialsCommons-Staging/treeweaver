@@ -103,3 +103,41 @@ def test_no_budget_means_no_limit(memfs, build):
 
     assert manifest.truncated is False
     assert manifest.totals.copied == 1
+
+
+def test_a_meta_file_respects_the_total_budget(memfs, build):
+    """A meta file is a write like any other, including against the budget."""
+    root = build({f"f{i:02d}.txt": b"x" * 100 for i in range(10)})
+
+    manifest = weave(
+        root,
+        target_fs=memfs,
+        out="/twin",
+        zip=False,
+        budgets=Budgets(max_total_size=250),
+    ).manifest
+
+    assert manifest.truncated is True
+    written = sum(len(memfs.cat_file("/twin/" + p)) for p in twin_listing(memfs))
+    assert written <= 250
+
+
+def test_totals_count_nodes_not_entries(memfs, build):
+    """keep+text is two entries over one file, read once."""
+    from fixtures import docx_bytes
+
+    root = build({"report.docx": docx_bytes()})
+
+    manifest = weave(
+        root,
+        target_fs=memfs,
+        out="/twin",
+        zip=False,
+        handler_settings={"office": {"settings": {"modes": ["keep", "text"]}}},
+    ).manifest
+
+    docx_entries = [e for e in manifest.entries if e.src == "report.docx"]
+    assert len(docx_entries) == 2
+    # One file, counted once, its bytes read once.
+    assert manifest.totals.nodes == 1
+    assert manifest.totals.bytes_in == docx_entries[0].bytes_in

@@ -8,6 +8,7 @@ what the manifest says about it. A handler only describes content.
 import hashlib
 import json
 import mimetypes
+import shutil
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ import fsspec
 from pydantic import BaseModel, ConfigDict
 
 from .budgets import Budgets, BudgetTracker
-from .fsutil import children, excluded, normalise, open_fs, zip_tree
+from .fsutil import children, contained, excluded, normalise, open_fs, zip_tree
 from .manifest import Manifest, ManifestEntry, NodeOutcome, Totals
 from .model import Copy, Descend, HandlerParam, Node, Skip, Write, meta_name
 from .registry import HandlerRegistry
@@ -29,6 +30,10 @@ MANIFEST_NAME = "manifest.json"
 
 class HandlerFailed(RuntimeError):
     """A handler raised and `strict` was asked for."""
+
+
+class PathEscape(RuntimeError):
+    """An outcome named a path outside the twin root."""
 
 
 class WeaveResult(BaseModel):
@@ -83,7 +88,7 @@ class Walker:
     def run(self, fs: fsspec.AbstractFileSystem, root: str) -> Manifest:
         root = normalise(root)
         queue: deque[_Job] = deque()
-        self._enqueue_children(queue, fs, root, root, depth=1)
+        self._enqueue(queue, fs, children(fs, root), depth=1)
 
         while queue:
             job = queue.popleft()
@@ -94,27 +99,27 @@ class Walker:
         self._write_manifest()
         return self.manifest
 
-    def _enqueue_children(
+    def _enqueue(
         self,
         queue: deque,
         fs: fsspec.AbstractFileSystem,
-        abs_path: str,
-        root: str,
+        entries: list[dict],
         depth: int,
         rel_prefix: str = "",
     ) -> None:
-        for entry in children(fs, abs_path):
-            name = normalise(entry["name"]).rsplit("/", 1)[-1]
+        for entry in entries:
+            abs_path = normalise(entry["name"])
+            name = abs_path.rsplit("/", 1)[-1]
             rel = f"{rel_prefix}{name}" if rel_prefix else name
             is_dir = entry.get("type") == "directory"
             queue.append(
                 _Job(
                     fs=fs,
-                    abs_path=normalise(entry["name"]),
+                    abs_path=abs_path,
                     rel=rel + "/" if is_dir else rel,
                     depth=depth,
                     is_dir=is_dir,
-                    size=int(entry.get("size") or 0),
+                    size=0 if is_dir else _size_of(fs, entry, abs_path),
                 )
             )
 
@@ -202,46 +207,91 @@ class Walker:
         for outcome in outcomes:
             if self.tracker.truncated:
                 return
-            if isinstance(outcome, Skip):
+            try:
+                self._apply_one(job, outcome, handler_name, queue, root)
+            except PathEscape as exc:
+                if self.strict:
+                    raise
                 self.manifest.record(
                     ManifestEntry(
                         src=job.rel,
                         outcome="skip",
                         handler=handler_name,
-                        reason=outcome.reason,
+                        reason=f"refused: {exc}",
                     )
                 )
-            elif isinstance(outcome, Descend):
-                into = outcome.into if outcome.into is not None else job.rel
-                self._mkdir(into)
-                self.manifest.record(
-                    ManifestEntry(
-                        src=job.rel,
-                        outcome="descend",
-                        handler=handler_name,
-                        dst=[into],
-                    )
+
+    def _apply_one(self, job: _Job, outcome, handler_name: str, queue, root) -> None:
+        if isinstance(outcome, Skip):
+            self.manifest.record(
+                ManifestEntry(
+                    src=job.rel,
+                    outcome="skip",
+                    handler=handler_name,
+                    reason=outcome.reason,
                 )
-                # A handler may descend into a different filesystem than the one
-                # the node came from, which is how an archive is walked without
-                # being unpacked. A plain path means stay where we are.
-                if "://" in outcome.src or "::" in outcome.src:
-                    sub_fs, sub_root = open_fs(outcome.src)
-                    sub_root = sub_root or "/"
-                else:
-                    sub_fs, sub_root = job.fs, outcome.src
-                self._enqueue_children(
-                    queue,
-                    sub_fs,
-                    sub_root,
-                    root,
-                    depth=job.depth + 1,
-                    rel_prefix=into if into.endswith("/") else into + "/",
+            )
+        elif isinstance(outcome, Descend):
+            self._apply_descend(job, outcome, handler_name, queue, root)
+        elif isinstance(outcome, Copy):
+            self._apply_copy(job, outcome, handler_name)
+        elif isinstance(outcome, Write):
+            self._apply_write(job, outcome, handler_name)
+
+    def _apply_descend(
+        self, job: _Job, outcome: Descend, handler_name: str, queue, root
+    ) -> None:
+        into = outcome.into if outcome.into is not None else job.rel
+        self._mkdir(into)
+
+        # A handler may descend into a different filesystem than the one the
+        # node came from, which is how an archive is walked without being
+        # unpacked. A plain path means stay where we are.
+        if "://" in outcome.src or "::" in outcome.src:
+            try:
+                sub_fs, sub_root = open_fs(outcome.src)
+                sub_root = sub_root or "/"
+                child_entries = children(sub_fs, sub_root)
+            except Exception as exc:  # noqa: BLE001
+                # Opening a container is as likely to fail as parsing one: a
+                # truncated, renamed or encrypted archive raises here rather
+                # than inside the handler. It is still one bad file, so it is
+                # recorded like any other failure instead of ending the walk.
+                if self.strict:
+                    raise HandlerFailed(
+                        f"handler {handler_name!r} could not open {job.rel!r}: {exc}"
+                    ) from exc
+                self._write_meta(
+                    job.rel,
+                    {
+                        "error": _short(exc),
+                        "error_type": type(exc).__name__,
+                        "handler": handler_name,
+                        "src": job.rel,
+                        "bytes": job.size,
+                    },
+                    outcome="error",
+                    handler=handler_name,
+                    reason=f"{type(exc).__name__}: {exc}",
+                    bytes_in=job.size,
                 )
-            elif isinstance(outcome, Copy):
-                self._apply_copy(job, outcome, handler_name)
-            elif isinstance(outcome, Write):
-                self._apply_write(job, outcome, handler_name)
+                return
+        else:
+            sub_fs, sub_root = job.fs, outcome.src
+            child_entries = children(sub_fs, sub_root)
+
+        self.manifest.record(
+            ManifestEntry(
+                src=job.rel, outcome="descend", handler=handler_name, dst=[into]
+            )
+        )
+        self._enqueue(
+            queue,
+            sub_fs,
+            child_entries,
+            depth=job.depth + 1,
+            rel_prefix=into if into.endswith("/") else into + "/",
+        )
 
     def _apply_copy(self, job: _Job, outcome: Copy, handler_name: str) -> None:
         dst = outcome.dst or job.rel
@@ -301,7 +351,7 @@ class Walker:
             )
         )
 
-    def _exhausted(self, rel: str, size: int, handler_name: str) -> bool:
+    def _exhausted(self, rel: str, size: int, handler_name: str | None) -> bool:
         if not self.tracker.would_exhaust(size):
             return False
         self.tracker.truncated = True
@@ -329,6 +379,11 @@ class Walker:
     ) -> None:
         dst = meta_name(rel)
         data = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+        # A meta file is a write like any other. Skipping the total-size check
+        # here would let a run with a verbose exception per node overshoot the
+        # budget that was set precisely to bound it.
+        if self._exhausted(rel, len(data), handler):
+            return
         self._put(dst, data)
         self.manifest.record(
             ManifestEntry(
@@ -343,11 +398,20 @@ class Walker:
         )
 
     def _mkdir(self, rel: str) -> None:
-        target = f"{self.target_root}/{rel.rstrip('/')}" if rel else self.target_root
+        if rel:
+            safe = contained(rel)
+            if safe is None:
+                raise PathEscape(f"{rel!r} resolves outside the twin root")
+            target = f"{self.target_root}/{safe}"
+        else:
+            target = self.target_root
         self.target_fs.makedirs(target, exist_ok=True)
 
     def _put(self, rel: str, data: bytes) -> None:
-        target = f"{self.target_root}/{rel}"
+        safe = contained(rel)
+        if safe is None:
+            raise PathEscape(f"{rel!r} resolves outside the twin root")
+        target = f"{self.target_root}/{safe}"
         parent = target.rsplit("/", 1)[0]
         self.target_fs.makedirs(parent, exist_ok=True)
         with self.target_fs.open(target, "wb") as handle:
@@ -359,6 +423,29 @@ class Walker:
         self.target_fs.makedirs(f"{self.target_root}/{MANIFEST_DIR}", exist_ok=True)
         with self.target_fs.open(target, "wb") as handle:
             handle.write(self.manifest.model_dump_json(indent=2).encode("utf-8"))
+
+
+def _short(exc: BaseException, limit: int = 2000) -> str:
+    """An exception message, bounded. Some carry a whole payload in their text."""
+    text = str(exc)
+    return text if len(text) <= limit else text[:limit] + f"... ({len(text)} chars)"
+
+
+def _size_of(fs: fsspec.AbstractFileSystem, entry: dict, abs_path: str) -> int:
+    """Size of a listed file, asked for directly when the listing omits it.
+
+    Treating a missing size as zero would be indistinguishable from an empty
+    file, and the walker mirrors empty files without calling a handler. On a
+    backend whose listing carries no size, that would quietly replace every
+    file with nothing.
+    """
+    size = entry.get("size")
+    if size is not None:
+        return int(size)
+    try:
+        return int(fs.info(abs_path).get("size") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def _digest(fs: fsspec.AbstractFileSystem, abs_path: str) -> tuple[str, int]:
@@ -402,7 +489,9 @@ def weave(
     if isinstance(budgets, dict):
         budgets = Budgets(**budgets)
 
-    registry = registry or HandlerRegistry.from_defaults()
+    # Copied, not mutated: passing default_registry() here would otherwise
+    # rebind the process-wide handlers for every later call.
+    registry = registry.copy() if registry else HandlerRegistry.from_defaults()
     registry.merge(custom_handlers)
     registry.apply_settings(handler_settings)
 
@@ -410,6 +499,11 @@ def weave(
 
     if target_fs is None:
         twin_path = Path(out) if out else _sibling_twin(root)
+        # A twin is a picture of the source as it is now. Writing into a
+        # previous one leaves files the source no longer has, and those then
+        # ride into the regenerated zip while the manifest never mentions them.
+        if twin_path.exists():
+            shutil.rmtree(twin_path)
         twin_path.mkdir(parents=True, exist_ok=True)
         target_fs, target_root = open_fs(twin_path)
     else:

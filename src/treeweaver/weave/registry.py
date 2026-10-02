@@ -96,10 +96,12 @@ class HandlerRegistry:
             if "enabled" in overrides:
                 self._enabled[name] = bool(overrides["enabled"])
             if "match_regex" in overrides:
-                handler = handler.model_copy(
-                    update={"match_regex": overrides["match_regex"]}
+                # Rebuilt rather than model_copy'd: an update bypasses the
+                # field validator, so a bad pattern would surface as a raw
+                # re.error from somewhere else entirely.
+                handler = handler.model_validate(
+                    {**handler.__dict__, "match_regex": overrides["match_regex"]}
                 )
-                re.compile(handler.match_regex)
             if "settings" in overrides:
                 value = overrides["settings"]
                 if isinstance(value, BaseModel):
@@ -165,6 +167,15 @@ class HandlerRegistry:
         ]
         rows.sort(key=lambda m: (m.specificity, m.order), reverse=True)
         return rows
+
+    def copy(self) -> "HandlerRegistry":
+        """An independent registry with the same handlers and enabled flags."""
+        clone = HandlerRegistry()
+        clone._handlers = dict(self._handlers)
+        clone._enabled = dict(self._enabled)
+        clone._order = dict(self._order)
+        clone._next_order = self._next_order
+        return clone
 
     def __contains__(self, name: object) -> bool:
         return name in self._handlers

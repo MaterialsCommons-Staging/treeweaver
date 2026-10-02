@@ -98,10 +98,12 @@ def _parser() -> argparse.ArgumentParser:
 def _registry(args) -> HandlerRegistry:
     registry = HandlerRegistry.from_defaults()
     registry.apply_settings(_settings(args, registry))
-    for name in getattr(args, "enable", []):
-        registry.set_enabled(name, True)
-    for name in getattr(args, "disable", []):
-        registry.set_enabled(name, False)
+    for flag, value in (("enable", True), ("disable", False)):
+        for name in getattr(args, flag, []):
+            if name not in registry:
+                known = ", ".join(r.name for r in registry.table())
+                raise SystemExit(f"--{flag} names no handler: {name!r}. Known: {known}")
+            registry.set_enabled(name, value)
     return registry
 
 
@@ -202,15 +204,26 @@ def _document(args) -> int:
 
 
 def _run(args) -> int:
-    result = weave(args.source, out=args.out, zip=False)
+    # The twin goes to a temporary directory unless asked for by name. The
+    # sibling <source>_twin is where `weave` puts its output, and `run` has no
+    # business deleting a twin somebody else built there.
+    scratch = None
+    out = args.out
+    if out is None:
+        scratch = tempfile.mkdtemp(prefix="treeweaver-run-")
+        out = Path(scratch) / (Path(args.source).name + "_twin")
+
+    result = weave(args.source, out=out, zip=False)
     rest = [a for a in args.rest if a != "--"]
     try:
         from .treeweaver2 import main as v2_main
 
         return v2_main([str(result.twin_path), *rest]) or 0
     finally:
-        if not args.keep_twin and args.out is None:
-            shutil.rmtree(result.twin_path, ignore_errors=True)
+        if scratch and not args.keep_twin:
+            shutil.rmtree(scratch, ignore_errors=True)
+        elif scratch:
+            print(f"twin kept at {result.twin_path}")
 
 
 def _handlers(args) -> int:
