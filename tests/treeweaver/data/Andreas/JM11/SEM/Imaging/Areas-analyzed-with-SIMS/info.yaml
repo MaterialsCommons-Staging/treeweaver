@@ -1,0 +1,5 @@
+# Meaning of the directory structure
+dir_structure: /dataset
+data_files: ["*.tif", "*.txt"]
+
+license: https://creativecommons.org/licenses/by/4.0/

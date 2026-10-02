@@ -1,0 +1,30 @@
+# Meaning of the directory structure
+dir_structure: /sample/instrument/process/dataset
+
+# URL of the root folder for the data on sharepoint
+base_url: "https://studntnu.sharepoint.com/:i:/r/sites/o365_SFIPhysMet/Shared%20Documents/Reseach%20Areas,%20RA%20(Open%20channel)/RA%203%20Sustainable%20and%20high-performance%20material%20development/Andreas%20Voll%20Bugten%20data/"
+
+# User prefix (trigram)
+user_prefix: "avb"
+
+# Owner of the data
+rightsHolder: "org:NTNU"
+
+# License
+license: "TBD"  # XXX - define a license
+
+# Person who has produced the data
+creator: "pers:AnderasVollBugten"
+
+# Person who has operated the instruments
+operator: "pers:AnderasVollBugten"
+
+# Contact person
+contactPerson: "pers:MarisaDiSabatino"
+
+# IRI for the material that the base samples are taken from
+material: null
+
+# Additional column
+datasets:
+  creator: proj:physmet

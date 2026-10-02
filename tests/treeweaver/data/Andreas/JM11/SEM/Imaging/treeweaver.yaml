@@ -1,0 +1,8 @@
+# Treeweaver configuration file
+version: 1
+intents:
+  dataset:
+    config: "/{title1}/{title2}"
+    template:
+      label: "{title1}/{title2}"
+      license: "TBD"

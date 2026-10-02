@@ -1,0 +1,89 @@
+[project]
+name = "treeweaver"
+version = "0.1.0"
+description = "Extract semantics from a file structure"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Jesper Friis", email = "jesper.friis@sintef.no" },
+    { name = "Tor S. Haugland", email = "tor.haugland@sintef.no" },
+    { name = "Sylvain Gouttebroze", email = "sylvain.gouttebroze@sintef.no" },
+    { name = "Michele Brigadoi", email = "michele.brigadoi@unibo.it" },
+    { name = "Simon Stier", email = "simon.stier@isc.fraunhofer.de" },
+    { name = "Matthias A. Popp", email = "matthias.albert.popp@isc.fraunhofer.de" },
+    { name = "Joachim Kalinowski", email = "joachim.kalinowski@isc.fraunhofer.de" },
+]
+dependencies = [
+    "PyYAML>=6.0.3",
+    "parse>=1.22.1",
+    "wcmatch>=11.0.1",
+    "jsonschema>=4.26.0",
+    "requests>=2.34.2",
+    "pydantic>=2.9",
+    "fsspec>=2024.9.0",
+]
+
+[project.optional-dependencies]
+excel = ["openpyxl"]
+# Handlers that open binary formats. Each is only imported when its handler runs,
+# so a core install stays usable without them.
+formats = [
+    "treeweaver[excel]",
+    "pillow>=10.4",
+    "h5py>=3.11",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "pypdf>=5.0",
+]
+testing = [
+    "treeweaver[formats]",
+    "pytest>=9.1",
+    "pytest-cov>=7.1",
+    "reportlab>=4.2",
+]
+dev = [
+    "treeweaver[testing]",
+    "pre-commit>=4.6",
+    "ruff>=0.7",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+treeweaver = "treeweaver.cli:main"
+# The ported upstream entry points, kept so existing invocations still work.
+treeweaver1 = "treeweaver.treeweaver:main"
+treeweaver2 = "treeweaver.treeweaver2:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/treeweaver", "src/tabular"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+src = ["src"]
+
+# The vendored upstream sources must stay byte-identical to their origin, or
+# changes from SINTEF stop merging cleanly. Excluded rather than ignored:
+# lint.per-file-ignores silences rules but the formatter still rewrites the
+# file, which is exactly what has to not happen here.
+extend-exclude = [
+    "src/treeweaver/treeweaver.py",
+    "src/treeweaver/treeweaver2.py",
+    "src/tabular",
+    "tests/treeweaver",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/treeweaver/weave", "src/treeweaver/cli.py"]
+ignore_missing_imports = true

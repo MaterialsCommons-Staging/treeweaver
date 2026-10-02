@@ -1,0 +1,123 @@
+# Treeweaver version
+version: "2.0"
+
+# Default variable
+environment:
+  prefix: "arp"
+
+  rightsHolder: "org:NTNU"
+  license: "https://spdx.org"  # XXX - define a license (this means All Rights Reserved)
+
+  project: "proj:PhysMet"                # Project that created a sample or dataset
+  contactPoint: "pers:MarisaDiSabatino"  # Project leader or Supervisor
+  creator: "pers:ArmelPerrotin"          # Creator of sample or dataset
+  operator: "pers:ArmelPerrotin"         # Operator of an instrument
+
+  # URL to the root folder of your data
+  baseURL: "https://studntnu.sharepoint.com/:f:/r/sites/o365_SFIPhysMet/Shared%20Documents/Reseach%20Areas,%20RA%20(Open%20channel)/RA%205%20Data,%20sharing%20and%20digital%20platforms/Datasets/Armel"
+
+  # Empty defaults - will be ignored if not set by a pattern
+  hasComposition: ""
+  isDatumOf: ""
+  processedFrom: ""
+  location: ""
+  isTemporalPartOf: ""
+  isSpatioTemporalPartOf: ""
+  downloadURL: ""
+  technique: ""
+
+
+# Patterns matching
+# Variables will assigned
+patterns:
+- "Armel/characterizations/GDmass/{sampleId}/{name:underscored}.{ext}":
+    vars:
+      sampleId: "{sampleId}"
+      datasetId: "data-GDMS-{sampleId}-{name}"
+      measurementId: "GDMS-{sampleId}-{name}"
+      equipmentId: "emlab:GDMS"  # TODO: add this to equipment list
+      processedFrom: "{prefix}:{sampleId}"
+
+- "Armel/characterizations/SEM/EDS/{sampleId}- {name:underscored}.docx":
+    vars:
+      sampleId: "{sampleId}"
+      datasetId: "data-EDS-{sampleId}"
+      measurementId: "EDS-{sampleId}"
+      equipmentId: "emlab:SemA"  # TODO: check
+      processedFrom: "{prefix}:{sampleId}"
+
+- "Armel/characterizations/SEM/EDS/{sample}- {name:underscored}.docx":
+    appliesTo: [dataset]
+    vars:
+      datasetId: "data-EDS-{sample}-{name}"
+      processedFrom: "{prefix}:{sample}"
+      isDatumOf: "{prefix}:data-EDS-{sample}"
+      downloadURL: "{baseURL}/{escapedpath}"
+
+- "Armel/characterizations/SEM/ELKEM {name} {date:underscored}/{filename:underscored}.{ext}":
+    vars:
+      sampleId: "ELKEM-{name}-{date}"
+      datasetId: "data-SEM-ELKEM-{name}-{date}/{filename}"
+      measurementId: "SEM-ELKEM-{name}-{date}/{filename}"
+      equipmentId: "emlab:SemA"  # TODO: check
+      processedFrom: "{prefix}:ELKEM-{name}-{date}"
+
+
+# List of file patterns to exclude from documentation
+exclude:
+- ".*"
+- "~*"
+- "*~"
+- "README*"
+
+# The different types of data to document
+# You probably don't need to modify these
+templates:
+  sample:
+    "@id": "{prefix}:{sampleId}"
+    "@type": chameo:Sample
+    title: "{sampleId}"
+    description: ""
+    comment: ""
+    hasComposition: "{hasComposition}"
+    wasGeneratedBy: "{project}"
+    contactPoint: "{contactPoint}"
+    creator: "{creator}"
+    #creationDate: "{ctime}"
+    location: "{location}"
+    isTemporalPartOf: "{isTemporalPartOf}"
+    isSpatioTemporalPartOf: "{isSpatioTemporalPartOf}"
+
+  dataset:
+    "@id": "{prefix}:{datasetId}"
+    #"@type": ["emmo:Dataset", "dcat:Dataset"]
+    "@type": "emmo:Dataset"
+    title: "{datasetId}"
+    description: ""
+    comment: ""
+    keyword: ""
+    rightsHolder: "{rightsHolder}"
+    license: "{license}"
+    wasGeneratedBy: "{project}"
+    contactPoint: "{contactPoint}"
+    creator: "{creator}"
+    seeAlso: ""
+    releaseDate: "{ctime}"
+    version: ""
+    priorVersion: ""
+    processedFrom: "{processedFrom}"
+    isDatumOf: "{isDatumOf}"
+    distribution.downloadURL: "{downloadURL}"
+    distribution.accessURL: "{baseURL}/{escapedpath}"
+
+  measurement:
+    "@id": "avb:{measurementId}"
+    "@type": emmo:Measurement
+    title: "{measurementId}"
+    description: ""
+    comment: ""
+    hasInput: "{prefix}:{sampleId}"
+    hasOutput: "{prefix}:{datasetId}"
+    hasOperator: "{operator}"
+    hasParticipant: "{equipmentId}"
+    #hasTechnique: "{technique}"

@@ -1,0 +1,26 @@
+# Treeweaver configuration file
+root: true
+version: 1
+prune:
+  patterns:
+    - "JO11"
+intents:
+  sample:
+    config: "/@id"
+    template:
+      "@id": "physmet:sample/{@id}"
+      "@type": "chameo:Sample"
+  dataset:
+    config: "/sampleId///@id"
+    template:
+      "@id": "physmet:dataset/{@id}"
+      "@type": "ddoc:Dataset"
+      processedFrom: "physmet:sample/{sampleId}"
+      "distribution.accessUrl": "https://studntnu.sharepoint.com/:i:/r/sites/o365_SFIPhysMet/Shared%20Documents/Reseach%20Areas,%20RA%20(Open%20channel)/RA%203%20Sustainable%20and%20high-performance%20material%20development/Andreas%20Voll%20Bugten%20data/{localPath}"
+  procedure:
+    config: "/sampleId/instrument/label/expId"
+    template:
+      "@id": "physmet:procedure/{localPath}"
+      "@type": "ddoc:Procedure"
+      hasInput: "physmet:sample/{sampleId}"
+      hasOutput: "physmet:dataset/{expId}"

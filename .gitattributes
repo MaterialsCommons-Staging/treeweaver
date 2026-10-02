@@ -1,0 +1,15 @@
+# LF everywhere, checkout included. The ported upstream sources are kept
+# byte-identical to their origin so changes from SINTEF stay mergeable, and a
+# platform-dependent line ending would break that on the first Windows commit.
+* text=auto eol=lf
+
+# Binary fixtures in the vendored corpus.
+*.tif binary
+*.jpg binary
+*.png binary
+*.zip binary
+*.xlsx binary
+*.docx binary
+*.pptx binary
+*.pdf binary
+*.h5 binary

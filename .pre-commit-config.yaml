@@ -1,0 +1,28 @@
+# The vendored upstream sources are excluded everywhere, so a refresh from
+# SINTEF never arrives with formatting changes of ours mixed into the diff.
+#
+#   pre-commit install
+exclude: |
+  (?x)^(
+    src/treeweaver/treeweaver\.py|
+    src/treeweaver/treeweaver2\.py|
+    src/tabular/|
+    tests/treeweaver/
+  )
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

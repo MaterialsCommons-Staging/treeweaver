@@ -1,0 +1,113 @@
+# Treeweaver version
+version: "2.0"
+
+# Default variable
+environment:
+  prefix: "avb"
+
+  rightsHolder: "org:NTNU"
+  license: "https://spdx.org"  # XXX - define a license (this means All Rights Reserved)
+
+  project: "proj:PhysMet"                  # Project that created a sample or dataset
+  contactPoint: "pers:MarisaDiSabatino"    # Project leader or Supervisor
+  creator: "pers:AnderasVollBugten"        # Creator of sample or dataset
+  operator: "pers:AnderasVollBugten"       # Operator of an instrument
+
+  # URL to the root folder of your data
+  baseURL: "https://studntnu.sharepoint.com/:i:/r/sites/o365_SFIPhysMet/Shared%20Documents/Reseach%20Areas,%20RA%20(Open%20channel)/RA%203%20Sustainable%20and%20high-performance%20material%20development/Andreas%20Voll%20Bugten%20data"
+
+  # Empty defaults - will be ignored if not set by a pattern
+  hasComposition: ""
+  isDatumOf: ""
+  processedFrom: ""
+  location: ""
+  isTemporalPartOf: ""
+  isSpatioTemporalPartOf: ""
+  downloadURL: ""
+  technique: ""
+
+
+# Patterns matching
+# Variables will be assigned
+patterns:
+- "Andreas/{sample}/{instrument}/{technique}/{experiment}":
+    match: "Andreas/{JM1?,JO11}/**"
+    vars:
+      sampleId: "{sample}"
+      datasetId: "data-{sample}-{technique}-{experiment}"
+      measurementId: "{sample}-{technique}-{experiment}"
+      processedFrom: "{prefix}:{sample}"
+    mappings:
+      "equipmentId:instrument":
+        SEM: "emlab:SemA"                 # ???
+        SIMS: "emlab:SIMS"                # ???
+        LOM: "emlab:LOM"                  # ???
+        EPMA: "emlab:EMPA"
+        Synchrotron: "emlab:Synchrotron"  # ???
+      "techniqueId:technique":
+        EDS: "chameo:EnergyDispersiveXraySpectroscopy"
+        Imaging: "chameo:ScanningElectronMicroscopy"
+        EPMA: "chameo:ElectronProbeMicroanalysis"
+        SIMS: "chameo:SecondaryIonMassSpectrometry"
+        Synchrotron: "chameo:SynchrotronXRayDiffraction"
+        EBSD: "chameo:ElectronBackscatterDiffraction"
+
+
+# List of file patterns to exclude from documentation
+exclude:
+- ".*"
+- "~*"
+- "*~"
+- "README*"
+
+# The different types of data to document
+# You probably don't need to modify these
+templates:
+  sample:
+    "@id": "{prefix}:{sampleId}"
+    "@type": chameo:Sample
+    title: "{sampleId}"
+    description: ""
+    comment: ""
+    hasComposition: "{hasComposition}"
+    wasGeneratedBy: "{project}"
+    contactPoint: "{contactPoint}"
+    creator: "{creator}"
+    #creationDate: "{ctime}"
+    location: "{location}"
+    isTemporalPartOf: "{isTemporalPartOf}"
+    isSpatioTemporalPartOf: "{isSpatioTemporalPartOf}"
+
+  dataset:
+    "@id": "{prefix}:{datasetId}"
+    #"@type": ["emmo:Dataset", "dcat:Dataset"]
+    "@type": "emmo:Dataset"
+    title: "{datasetId}"
+    description: ""
+    comment: ""
+    keyword: ""
+    rightsHolder: "{rightsHolder}"
+    license: "{license}"
+    wasGeneratedBy: "{project}"
+    contactPoint: "{contactPoint}"
+    creator: "{creator}"
+    seeAlso: ""
+    releaseDate: "{ctime}"
+    version: ""
+    priorVersion: ""
+    processedFrom: "{processedFrom}"
+    isDatumOf: "{isDatumOf}"
+    distribution.downloadURL: "{downloadURL}"
+    distribution.accessURL: "{baseURL}/{escapedpath}"
+
+  measurement:
+    "@id": "avb:{measurementId}"
+    "@type": emmo:Measurement
+    title: "{measurementId}"
+    description: ""
+    comment: ""
+    hasInput: "{prefix}:{sampleId}"
+    hasOutput: "{prefix}:{datasetId}"
+    hasOperator: "{operator}"
+    hasParticipant: "{equipmentId}"
+    hasTechnique: "{techniqueId}"
