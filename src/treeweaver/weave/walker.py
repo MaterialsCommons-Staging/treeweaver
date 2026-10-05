@@ -8,6 +8,7 @@ what the manifest says about it. A handler only describes content.
 import hashlib
 import json
 import mimetypes
+import re
 import shutil
 from collections import deque
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .budgets import Budgets, BudgetTracker
 from .fsutil import children, contained, excluded, normalise, open_fs, zip_tree
+from .hoist import hoist_tree
 from .manifest import Manifest, ManifestEntry, NodeOutcome, Totals
 from .model import Copy, Descend, HandlerParam, Node, Skip, Write, meta_name
 from .registry import HandlerRegistry
@@ -68,7 +70,9 @@ class Walker:
         exclude: list[str] | None = None,
         strict: bool = False,
         source_label: str = "",
+        reporter=None,
     ) -> None:
+        self.reporter = reporter
         self.registry = registry
         self.target_fs = target_fs
         self.target_root = normalise(target_root)
@@ -123,12 +127,15 @@ class Walker:
                 )
             )
 
+    def _record(self, entry: ManifestEntry) -> None:
+        self.manifest.record(entry)
+        if self.reporter is not None:
+            self.reporter.node(entry)
+
     def _visit(self, job: _Job, queue: deque, root: str) -> None:
         pattern = excluded(job.rel, self.exclude)
         if pattern:
-            self.manifest.record(
-                ManifestEntry(src=job.rel, outcome="excluded", reason=pattern)
-            )
+            self._record(ManifestEntry(src=job.rel, outcome="excluded", reason=pattern))
             return
 
         if job.is_dir and self.tracker.too_deep(job.depth):
@@ -145,7 +152,7 @@ class Walker:
         # faithful picture of the source tree.
         if not job.is_dir and job.size == 0:
             self._put(job.rel, b"")
-            self.manifest.record(
+            self._record(
                 ManifestEntry(
                     src=job.rel,
                     outcome="empty",
@@ -157,7 +164,7 @@ class Walker:
 
         handler = self.registry.resolve(job.rel)
         if handler is None:
-            self.manifest.record(
+            self._record(
                 ManifestEntry(src=job.rel, outcome="skip", reason="no handler matched")
             )
             return
@@ -188,7 +195,7 @@ class Walker:
             self._write_meta(
                 job.rel,
                 {
-                    "error": str(exc),
+                    "error": _short(exc),
                     "error_type": type(exc).__name__,
                     "handler": handler.name,
                     "src": job.rel,
@@ -196,7 +203,7 @@ class Walker:
                 },
                 outcome="error",
                 handler=handler.name,
-                reason=f"{type(exc).__name__}: {exc}",
+                reason=f"{type(exc).__name__}: {_short(exc)}",
                 bytes_in=job.size,
             )
             return
@@ -212,7 +219,7 @@ class Walker:
             except PathEscape as exc:
                 if self.strict:
                     raise
-                self.manifest.record(
+                self._record(
                     ManifestEntry(
                         src=job.rel,
                         outcome="skip",
@@ -223,7 +230,7 @@ class Walker:
 
     def _apply_one(self, job: _Job, outcome, handler_name: str, queue, root) -> None:
         if isinstance(outcome, Skip):
-            self.manifest.record(
+            self._record(
                 ManifestEntry(
                     src=job.rel,
                     outcome="skip",
@@ -272,7 +279,7 @@ class Walker:
                     },
                     outcome="error",
                     handler=handler_name,
-                    reason=f"{type(exc).__name__}: {exc}",
+                    reason=f"{type(exc).__name__}: {_short(exc)}",
                     bytes_in=job.size,
                 )
                 return
@@ -280,7 +287,7 @@ class Walker:
             sub_fs, sub_root = job.fs, outcome.src
             child_entries = children(sub_fs, sub_root)
 
-        self.manifest.record(
+        self._record(
             ManifestEntry(
                 src=job.rel, outcome="descend", handler=handler_name, dst=[into]
             )
@@ -320,7 +327,7 @@ class Walker:
         if self._exhausted(job.rel, len(data), handler_name):
             return
         self._put(dst, data)
-        self.manifest.record(
+        self._record(
             ManifestEntry(
                 src=job.rel,
                 outcome="copy",
@@ -340,7 +347,7 @@ class Walker:
         if self._exhausted(job.rel, len(data), handler_name):
             return
         self._put(outcome.dst, data)
-        self.manifest.record(
+        self._record(
             ManifestEntry(
                 src=job.rel,
                 outcome="write",
@@ -357,7 +364,7 @@ class Walker:
         self.tracker.truncated = True
         self.manifest.truncated = True
         self.manifest.truncated_at = rel
-        self.manifest.record(
+        self._record(
             ManifestEntry(
                 src=rel,
                 outcome="elided",
@@ -385,7 +392,7 @@ class Walker:
         if self._exhausted(rel, len(data), handler):
             return
         self._put(dst, data)
-        self.manifest.record(
+        self._record(
             ManifestEntry(
                 src=rel,
                 outcome=outcome,
@@ -425,9 +432,17 @@ class Walker:
             handle.write(self.manifest.model_dump_json(indent=2).encode("utf-8"))
 
 
+_ADDRESS = re.compile(r"<([\w.]+) object at 0x[0-9a-fA-F]+>")
+
+
 def _short(exc: BaseException, limit: int = 2000) -> str:
-    """An exception message, bounded. Some carry a whole payload in their text."""
-    text = str(exc)
+    """An exception message, bounded and stable.
+
+    Bounded because some exceptions carry a whole payload in their text, and
+    stable because an object repr embeds a memory address, which would make the
+    same source produce a different twin on every run.
+    """
+    text = _ADDRESS.sub(r"<\g<1>>", str(exc))
     return text if len(text) <= limit else text[:limit] + f"... ({len(text)} chars)"
 
 
@@ -477,9 +492,11 @@ def weave(
     budgets: Budgets | dict | None = None,
     exclude: list[str] | None = None,
     zip: bool = True,  # noqa: A002
+    hoist: bool = True,
     strict: bool = False,
     registry: HandlerRegistry | None = None,
     target_fs: fsspec.AbstractFileSystem | None = None,
+    reporter=None,
 ) -> WeaveResult:
     """Build a legible twin of `source`.
 
@@ -519,8 +536,17 @@ def weave(
         exclude=exclude,
         strict=strict,
         source_label=root,
+        reporter=reporter,
     )
     manifest = walker.run(source_fs, root)
+    if reporter is not None:
+        reporter.done()
+
+    if hoist:
+        # After the walk, so it sees every meta file, and the manifest is
+        # rewritten afterwards because the first copy predates the hoisting.
+        manifest.hoisted = hoist_tree(target_fs, target_root)
+        walker._write_manifest()
 
     zip_path = None
     if zip and isinstance(target_fs, fsspec.implementations.local.LocalFileSystem):

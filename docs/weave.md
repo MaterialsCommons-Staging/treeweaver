@@ -151,6 +151,56 @@ carries the measurement conditions and is worth keeping whole, the thousands of
 readings after it are bulk and reduce to a summary. On real spectra that is
 91 kB down to 2 kB, with beam voltage, live time and detector intact.
 
+## Shared metadata
+
+Instruments repeat themselves. Every image in a session carries the whole
+machine state, and almost all of it is the same state. Measured on a real SEM
+dataset: 92% of parsed parameters are identical across the images in their own
+directory, while across the dataset as a whole not one of the 722 keys holds a
+single value. So the sharing is per directory, and nowhere else.
+
+What the meta files in a directory agree on moves into
+`_shared.treeweaver.json`, and each keeps a `$ref` to it plus what it alone
+says:
+
+```json
+{
+  "$ref": "_shared.treeweaver.json",
+  "tags": {"unknown_34118": {"AP_MAG": {"value": "200 X", "label": "Mag"}}}
+}
+```
+
+Sibling keys override the shared document rather than being ignored, which is
+how JSON Schema 2020-12 and OpenAPI 3.1 read `$ref` but **not** what a strict
+JSON Reference resolver does. Anything consuming these files has to merge;
+`treeweaver.weave.hoist.resolve` does it in one call.
+
+A file of a different shape is never forced into a shared set. One image without
+an instrument block would otherwise zero out the whole directory, which is not
+hypothetical: a real SEM folder had 28 images with the block and one without.
+Such a file gets its own shared document or keeps its content whole.
+
+On the dataset above this takes the twin from 19 MB to 8.7 MB, and the
+parameters become queryable instead of one 30 kB string. `--no-hoist` keeps
+every meta file whole.
+
+## Reading the output
+
+Everything treeweaver says goes to stderr, so stdout stays usable for piping.
+A terminal gets a counter that rewrites itself, anything redirected gets plain
+levelled lines, because a progress bar in a CI log cannot be grepped.
+
+```
+WARNING error broken.tif: UnidentifiedImageError: cannot identify image file
+WARNING elided raw/scan.bin: max_leftover_blob_size
+```
+
+`-v` adds a line per node, `-q` leaves only errors. Both work before or after
+the subcommand.
+
+Error text is scrubbed of memory addresses, so the same source tree produces the
+same twin byte for byte.
+
 ## The manifest
 
 `_treeweaver/manifest.json` at the twin root records the run: budgets, the

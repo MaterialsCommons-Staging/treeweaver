@@ -15,6 +15,7 @@ import typing
 from pathlib import Path
 
 from .weave import Budgets, HandlerRegistry, weave
+from .weave.progress import Reporter, setup_logging
 
 __all__ = ["main"]
 
@@ -22,6 +23,9 @@ __all__ = ["main"]
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    setup_logging(
+        verbose=getattr(args, "verbose", 0), quiet=getattr(args, "quiet", False)
+    )
     if not getattr(args, "command", None):
         parser.print_help()
         return 1
@@ -33,9 +37,21 @@ def _parser() -> argparse.ArgumentParser:
         prog="treeweaver",
         description="Extract semantics from a file structure.",
     )
-    sub = parser.add_subparsers(dest="command")
+    parser.add_argument(
+        "-v", "--verbose", action="count", default=0, help="a line per node"
+    )
+    parser.add_argument("-q", "--quiet", action="store_true", help="errors only")
+    # Also accepted after the subcommand, which is where people reach for them.
+    # SUPPRESS keeps the subparser from resetting a value given before it.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-v", "--verbose", action="count", default=argparse.SUPPRESS)
+    common.add_argument("-q", "--quiet", action="store_true", default=argparse.SUPPRESS)
 
-    weave_cmd = sub.add_parser("weave", help="build a legible twin of a directory tree")
+    sub = parser.add_subparsers(dest="command", parser_class=argparse.ArgumentParser)
+
+    weave_cmd = sub.add_parser(
+        "weave", parents=[common], help="build a legible twin of a directory tree"
+    )
     weave_cmd.add_argument("source")
     weave_cmd.add_argument("--out", help="where to build the twin")
     weave_cmd.add_argument(
@@ -46,6 +62,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     weave_cmd.add_argument(
         "--strict", action="store_true", help="fail the run if a handler raises"
+    )
+    weave_cmd.add_argument(
+        "--no-hoist",
+        action="store_true",
+        help="keep every meta file whole instead of sharing what they agree on",
     )
     weave_cmd.add_argument("--max-depth", type=int)
     weave_cmd.add_argument("--max-blob-size", help='e.g. "1MiB"')
@@ -66,7 +87,7 @@ def _parser() -> argparse.ArgumentParser:
     weave_cmd.set_defaults(func=_weave)
 
     doc_cmd = sub.add_parser(
-        "document", help="document a tree by matching path patterns"
+        "document", parents=[common], help="document a tree by matching path patterns"
     )
     doc_cmd.add_argument(
         "--v1", action="store_true", help="use the first-generation engine"
@@ -74,7 +95,9 @@ def _parser() -> argparse.ArgumentParser:
     doc_cmd.add_argument("rest", nargs=argparse.REMAINDER)
     doc_cmd.set_defaults(func=_document)
 
-    run_cmd = sub.add_parser("run", help="weave a tree, then document the twin")
+    run_cmd = sub.add_parser(
+        "run", parents=[common], help="weave a tree, then document the twin"
+    )
     run_cmd.add_argument("source")
     run_cmd.add_argument("--out", help="where to build the twin")
     run_cmd.add_argument("--keep-twin", action="store_true")
@@ -82,12 +105,14 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.set_defaults(func=_run)
 
     handlers_cmd = sub.add_parser(
-        "handlers", help="list the resolved handlers in resolution order"
+        "handlers",
+        parents=[common],
+        help="list the resolved handlers in resolution order",
     )
     handlers_cmd.set_defaults(func=_handlers)
 
     explain_cmd = sub.add_parser(
-        "explain", help="show which handler wins for a path, and why"
+        "explain", parents=[common], help="show which handler wins for a path, and why"
     )
     explain_cmd.add_argument("path")
     explain_cmd.set_defaults(func=_explain)
@@ -164,7 +189,9 @@ def _weave(args) -> int:
         ),
         exclude=args.exclude,
         zip=not args.no_zip,
+        hoist=not args.no_hoist,
         strict=args.strict,
+        reporter=Reporter(),
     )
     _report(result)
     return 0
@@ -182,6 +209,13 @@ def _report(result) -> None:
         f"elided {totals.elided}  errors {totals.errors}"
     )
     print(f"bytes    {totals.bytes_in} in, {totals.bytes_out} out")
+    hoisted = result.manifest.hoisted
+    if hoisted and hoisted["shared_files"]:
+        before, after = hoisted["bytes_before"], hoisted["bytes_after"]
+        print(
+            f"shared   {hoisted['shared_files']} files cover {hoisted['rewritten']} "
+            f"others, metadata {before:,} -> {after:,} bytes"
+        )
     if result.manifest.truncated:
         print(f"TRUNCATED at {result.manifest.truncated_at} (max_total_size)")
 
