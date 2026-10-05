@@ -10,6 +10,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict
 
+from ..keyvalue import structure
 from ..model import Handler, HandlerParam, Outcome, Write, meta_name
 
 __all__ = ["TiffSettings", "tiff_handler"]
@@ -17,6 +18,11 @@ __all__ = ["TiffSettings", "tiff_handler"]
 
 class TiffSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    parse_pairs: bool = True
+    """Read a settings blob as key/value pairs instead of keeping one long
+    string. What makes the parameters queryable, and what lets the shared parts
+    be hoisted out of a directory of images."""
 
     max_value_length: int = 65536
     """Tag values longer than this are truncated, so one huge private tag
@@ -33,6 +39,7 @@ def _handle(param: HandlerParam) -> list[Outcome]:
 
     settings = param.settings
     limit = getattr(settings, "max_value_length", 65536)
+    parse = getattr(settings, "parse_pairs", True)
 
     with param.open() as stream, Image.open(stream) as image:
         payload = {
@@ -40,7 +47,7 @@ def _handle(param: HandlerParam) -> list[Outcome]:
             "mode": image.mode,
             "size": list(image.size),
             "n_frames": getattr(image, "n_frames", 1),
-            "tags": _tags(image, TiffTags, limit),
+            "tags": _tags(image, TiffTags, limit, parse),
         }
 
     return [
@@ -51,7 +58,7 @@ def _handle(param: HandlerParam) -> list[Outcome]:
     ]
 
 
-def _tags(image, tifftags, limit: int) -> dict:
+def _tags(image, tifftags, limit: int, parse: bool = True) -> dict:
     tags = {}
     for code, value in getattr(image, "tag_v2", {}).items():
         info = tifftags.lookup(code)
@@ -60,6 +67,11 @@ def _tags(image, tifftags, limit: int) -> dict:
         # entry and silently keep whichever came last. Vendor blocks live in
         # exactly those codes, so the number goes in the key.
         name = info.name if info and info.name != "unknown" else f"unknown_{code}"
+        if parse and isinstance(value, str):
+            parsed = structure(value, code)
+            if parsed is not value:
+                tags[name] = parsed
+                continue
         tags[name] = _shorten(value, limit)
     return tags
 

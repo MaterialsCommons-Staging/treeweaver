@@ -59,6 +59,8 @@ class Manifest(BaseModel):
     truncated: bool = False
     truncated_at: str | None = None
     totals: Totals = Field(default_factory=Totals)
+    hoisted: dict[str, int] | None = None
+    """What the hoisting pass moved into shared files, if it ran."""
     entries: list[ManifestEntry] = Field(default_factory=list)
 
     _seen: set[str] = PrivateAttr(default_factory=set)

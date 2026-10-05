@@ -203,7 +203,11 @@ def test_private_tiff_tags_do_not_collide(memfs, build):
 
 
 def test_an_instrument_block_survives_by_default(memfs, build):
-    """Tens of kilobytes of microscope state is the point, not noise."""
+    """Tens of kilobytes of microscope state is the point, not noise.
+
+    It arrives parsed into pairs rather than as one string, which is what makes
+    the settings queryable and lets the shared ones be hoisted out later.
+    """
     from PIL import Image
     from PIL.TiffImagePlugin import ImageFileDirectory_v2
 
@@ -217,6 +221,30 @@ def test_an_instrument_block_survives_by_default(memfs, build):
 
     root = build({"sem.tif": buffer.getvalue()})
     weave(root, target_fs=memfs, out="/twin", zip=False)
+
+    parsed = meta(memfs, "sem.tif")["tags"]["unknown_34118"]
+    assert len(parsed) == 1500
+    assert parsed["DP_PARAM_7"] == {"value": "value 7", "label": "Label 7"}
+
+
+def test_the_raw_block_can_be_kept_instead(memfs, build):
+    from PIL import Image
+    from PIL.TiffImagePlugin import ImageFileDirectory_v2
+
+    block = "\n".join(f"DP_PARAM_{i}\nLabel {i} = value {i}" for i in range(1500))
+    buffer = io.BytesIO()
+    ifd = ImageFileDirectory_v2()
+    ifd[34118] = block
+    Image.new("L", (8, 8)).save(buffer, format="TIFF", tiffinfo=ifd)
+
+    root = build({"sem.tif": buffer.getvalue()})
+    weave(
+        root,
+        target_fs=memfs,
+        out="/twin",
+        zip=False,
+        handler_settings={"tiff": {"settings": {"parse_pairs": False}}},
+    )
 
     assert meta(memfs, "sem.tif")["tags"]["unknown_34118"] == block
 

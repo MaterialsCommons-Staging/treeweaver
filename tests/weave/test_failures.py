@@ -81,3 +81,29 @@ def test_unknown_format_is_a_skip_not_an_error(memfs, build):
 
     assert outcome_of(manifest, "a.weirdext").outcome == "skip"
     assert manifest.totals.errors == 0
+
+
+def test_an_error_message_does_not_embed_a_memory_address(memfs, build):
+    """Twice over the same tree must give the same twin, byte for byte."""
+    root = build({"a.tif": b"this is not a tiff"})
+
+    weave(root, target_fs=memfs, out="/twin", zip=False)
+    first = memfs.cat_file("/twin/a.tif.treeweaver.json")
+    memfs.rm("/twin", recursive=True)
+    weave(root, target_fs=memfs, out="/twin", zip=False)
+    second = memfs.cat_file("/twin/a.tif.treeweaver.json")
+
+    assert first == second
+    text = json.loads(first)["error"]
+    assert "0x" not in text
+    # The class is still named, only the address is gone.
+    assert "LocalFileOpener" in text or "object" not in text
+
+
+def test_the_manifest_reason_is_stable_too(memfs, build):
+    root = build({"a.tif": b"not a tiff"})
+
+    manifest = weave(root, target_fs=memfs, out="/twin", zip=False).manifest
+
+    reason = next(e.reason for e in manifest.entries if e.outcome == "error")
+    assert "0x" not in reason
